@@ -1,0 +1,13 @@
+# 核心依赖
+telethon>=1.28.5
+python-telegram-bot>=20.0
+python-dotenv>=1.0.0
+
+# 数据库支持（Python 3.13兼容）
+pysqlite3-binary>=0.5.0
+
+# 性能优化
+cryptg>=0.4.0
+
+# 代理支持（可选）
+PySocks>=1.7.1

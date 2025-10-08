@@ -1,0 +1,28 @@
+[Unit]
+Description=Telegram Message Receiver Client
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/www/wwwroot/telegram_client
+Environment=PATH=/www/wwwroot/telegram_client/venv/bin
+Environment=PYTHONPATH=/www/wwwroot/telegram_client
+ExecStart=/www/wwwroot/telegram_client/venv/bin/python telegram_client.py
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=telegram-client
+
+# 安全设置
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/www/wwwroot/telegram_client
+
+[Install]
+WantedBy=multi-user.target

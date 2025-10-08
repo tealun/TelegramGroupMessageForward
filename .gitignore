@@ -1,0 +1,81 @@
+# 环境配置文件
+.env
+*.env.local
+*.env.production
+
+# Telegram会话文件
+*.session
+*.session-journal
+telegram_session.*
+bot_session.*
+
+# 日志文件
+*.log
+logs/
+telegram_client.log
+
+# Python相关
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 虚拟环境
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# IDE相关
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 系统文件
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# 临时文件
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# 数据库文件
+*.db
+*.sqlite
+*.sqlite3
+
+# 媒体文件缓存
+downloads/
+media/
+temp/
+
+# 进程ID文件
+*.pid
