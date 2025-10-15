@@ -44,6 +44,16 @@ class Config:
     FORWARD_FORWARDED = os.getenv('FORWARD_FORWARDED', 'false').lower() == 'true'
     FORWARD_BOT_MESSAGES = os.getenv('FORWARD_BOT_MESSAGES', 'true').lower() == 'true'
     
+    # 转发模式配置 - 简化版
+    DOWNLOAD_AND_RESEND = os.getenv('DOWNLOAD_AND_RESEND', 'false').lower() == 'true'
+    MAX_DOWNLOAD_SIZE = int(os.getenv('MAX_DOWNLOAD_SIZE', '20'))  # MB
+    
+    # 媒体类型转发控制
+    FORWARD_PHOTOS = os.getenv('FORWARD_PHOTOS', 'true').lower() == 'true'
+    FORWARD_VIDEOS = os.getenv('FORWARD_VIDEOS', 'true').lower() == 'true'
+    FORWARD_DOCUMENTS = os.getenv('FORWARD_DOCUMENTS', 'true').lower() == 'true'
+    FORWARD_AUDIO = os.getenv('FORWARD_AUDIO', 'true').lower() == 'true'
+    
     # 消息格式配置
     MESSAGE_PREFIX = os.getenv('MESSAGE_PREFIX', '📢 [{chat_title}] {sender_name}:')
     SHOW_MESSAGE_TIME = os.getenv('SHOW_MESSAGE_TIME', 'true').lower() == 'true'

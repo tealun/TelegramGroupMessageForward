@@ -14,6 +14,9 @@ bot_session.*
 logs/
 telegram_client.log
 
+# 开发计划文件夹（不上传到仓库）
+development_plan/
+
 # Python相关
 __pycache__/
 *.py[cod]

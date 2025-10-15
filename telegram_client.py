@@ -16,7 +16,7 @@ from config import Config
 
 # 设置日志
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # 临时改为DEBUG级别
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('telegram_client.log', encoding='utf-8'),
@@ -93,11 +93,21 @@ class TelegramMessageReceiver:
             """处理新消息"""
             # 如果启用了转发功能，先检查是否来自监听群组
             if self.forward_enabled:
+                # 添加调试日志
+                try:
+                    chat = await event.get_chat()
+                    chat_title = getattr(chat, 'title', 'Unknown')
+                    logger.debug(f"🔍 收到消息 - 群组: {chat_title}, ID: {event.chat_id}, 配置的群组: {Config.MONITOR_GROUPS}")
+                except:
+                    logger.debug(f"🔍 收到消息 - 无法获取群组信息, chat_id: {event.chat_id}")
+                
                 is_monitored = await self.is_monitored_group(event)
                 if is_monitored:
                     # 只有监听的群组才处理和显示消息
                     await self.handle_new_message(event)
                     await self.handle_forward_message(event)
+                else:
+                    logger.debug(f"⏭️ 跳过非监听群组消息: {event.chat_id}")
             else:
                 # 如果未启用转发，处理所有消息（可选择性记录）
                 await self.handle_new_message(event)
@@ -123,32 +133,49 @@ class TelegramMessageReceiver:
             chat_id = event.chat_id
             chat = await event.get_chat()
             
+            # 添加详细调试日志
+            chat_title = getattr(chat, 'title', 'Unknown')
+            logger.debug(f"🔍 检查群组匹配 - 当前: {chat_title} (ID: {chat_id}), 配置: {Config.MONITOR_GROUPS}")
+            
             # 检查群组ID是否匹配（支持多种格式）
             for monitor_group in Config.MONITOR_GROUPS:
                 monitor_group = str(monitor_group).strip()
                 
                 # 方式1: 直接匹配chat_id（最常见）
                 if str(monitor_group) == str(chat_id):
+                    logger.debug(f"✅ 群组ID直接匹配: {monitor_group} == {chat_id}")
                     return True
                 
                 # 方式2: 匹配绝对值（处理正负号差异）
                 if str(monitor_group) == str(abs(chat_id)):
+                    logger.debug(f"✅ 群组ID绝对值匹配: {monitor_group} == {abs(chat_id)}")
                     return True
                 
-                # 方式3: 匹配用户名格式
+                # 方式3: 超级群组格式匹配 (-100 前缀)
+                if str(chat_id).startswith('-100'):
+                    # 提取超级群组的原始ID (移除-100前缀)
+                    original_id = str(chat_id)[4:]  # 移除-100前缀
+                    if str(monitor_group) == original_id:
+                        logger.debug(f"✅ 超级群组ID匹配: {monitor_group} == {original_id} (来自 {chat_id})")
+                        return True
+                
+                # 方式4: 反向超级群组格式匹配
+                # 如果配置的是超级群组格式，提取原始ID进行匹配
+                if monitor_group.startswith('-100'):
+                    config_original_id = monitor_group[4:]  # 移除-100前缀
+                    if str(config_original_id) == str(abs(chat_id)):
+                        logger.debug(f"✅ 配置超级群组格式匹配: {monitor_group} -> {config_original_id} == {abs(chat_id)}")
+                        return True
+                
+                # 方式5: 匹配用户名格式
                 if (monitor_group.startswith('@') and 
                     hasattr(chat, 'username') and 
                     chat.username and 
                     monitor_group == f"@{chat.username}"):
+                    logger.debug(f"✅ 群组用户名匹配: {monitor_group} == @{chat.username}")
                     return True
-                
-                # 方式4: Bot API格式转换匹配
-                if monitor_group.startswith('-100'):
-                    # Bot API格式转Client API格式
-                    client_api_id = int(monitor_group[4:])  # 移除-100前缀
-                    if client_api_id == abs(chat_id):
-                        return True
             
+            logger.debug(f"❌ 群组不匹配: {chat_title} (ID: {chat_id}) 不在监听列表中")
             return False
             
         except Exception as e:
@@ -229,7 +256,7 @@ class TelegramMessageReceiver:
             self.forward_stats['errors'] += 1
     
     async def should_forward_message(self, event) -> bool:
-        """判断是否应该转发消息"""
+        """判断是否应该转发消息（简化版）"""
         try:
             message = event.message
             
@@ -260,19 +287,25 @@ class TelegramMessageReceiver:
             
             # 检查媒体类型
             if message.media:
+                if message.photo and not Config.FORWARD_PHOTOS:
+                    logger.debug("⏭️ 跳过图片消息")
+                    return False
+                
+                if message.video and not Config.FORWARD_VIDEOS:
+                    logger.debug("⏭️ 跳过视频消息")
+                    return False
+                
+                if message.document and not Config.FORWARD_DOCUMENTS:
+                    logger.debug("⏭️ 跳过文档消息")
+                    return False
+                
+                if (message.voice or message.audio) and not Config.FORWARD_AUDIO:
+                    logger.debug("⏭️ 跳过音频消息")
+                    return False
+                
                 if message.sticker and not Config.FORWARD_STICKERS:
                     logger.debug("⏭️ 跳过贴纸消息")
                     return False
-                
-                if message.voice and not Config.FORWARD_VOICE:
-                    logger.debug("⏭️ 跳过语音消息")
-                    return False
-                
-                if not Config.FORWARD_MEDIA:
-                    # 检查是否为非贴纸非语音的媒体
-                    if not message.sticker and not message.voice:
-                        logger.debug("⏭️ 跳过媒体消息")
-                        return False
             
             return True
             
@@ -281,11 +314,11 @@ class TelegramMessageReceiver:
             return False
     
     async def forward_message_to_bot(self, event):
-        """转发消息到机器人"""
+        """转发消息到机器人（简化版：一个开关控制模式）"""
         try:
             message = event.message
             
-            # 获取发送者信息
+            # 获取发送者和群组信息
             sender = await event.get_sender()
             sender_name = "Unknown"
             if isinstance(sender, User):
@@ -297,44 +330,28 @@ class TelegramMessageReceiver:
             elif hasattr(sender, 'title'):
                 sender_name = sender.title
             
-            # 获取群组信息
             chat = await event.get_chat()
             chat_title = getattr(chat, 'title', 'Unknown Group')
             
-            # 格式化消息时间
-            message_time = ""
-            if Config.SHOW_MESSAGE_TIME:
-                message_time = event.date.strftime(Config.TIME_FORMAT)
+            # 确保机器人实体已初始化
+            await self.ensure_bot_entity()
             
-            # 生成消息前缀
-            prefix = Config.format_message_prefix(
-                chat_title=chat_title,
-                sender_name=sender_name,
-                message_time=message_time,
-                chat_id=str(event.chat_id),
-                message_id=str(message.id)
-            )
-            
-            # 准备要发送的内容
-            text_content = message.message or ""
-            
-            # 组合最终消息
-            if text_content:
-                final_message = f"{prefix}\n{text_content}"
+            # 简单的模式选择：下载重发 vs 直接转发
+            if Config.DOWNLOAD_AND_RESEND:
+                # 下载重发模式：自定义格式
+                success = await self.download_and_resend_message(event, sender_name, chat_title)
+                if not success:
+                    # 如果下载失败（如文件太大），回退到直接转发
+                    await self.direct_forward_message(event, sender_name, chat_title)
             else:
-                final_message = f"{prefix}\n[媒体消息]"
-            
-            # 检查消息长度
-            if len(final_message) > Config.MAX_MESSAGE_LENGTH:
-                final_message = final_message[:Config.MAX_MESSAGE_LENGTH-3] + "..."
-            
-            # 发送消息
-            await self.send_to_bot_with_retry(final_message, message)
+                # 直接转发模式：快速转发
+                await self.direct_forward_message(event, sender_name, chat_title)
             
             # 记录成功转发
             self.forward_stats['messages_forwarded'] += 1
             
-            logger.info(f"📤 转发消息: {chat_title} -> {sender_name}: {text_content[:50]}...")
+            mode_text = "下载重发" if Config.DOWNLOAD_AND_RESEND else "直接转发"
+            logger.info(f"📤 {mode_text}: {chat_title} -> {sender_name}: {message.text[:50] if message.text else '[媒体消息]'}...")
             
             # 转发延迟
             if Config.FORWARD_DELAY > 0:
@@ -344,48 +361,221 @@ class TelegramMessageReceiver:
             logger.error(f"❌ 转发消息失败: {e}")
             self.forward_stats['errors'] += 1
     
-    async def send_to_bot_with_retry(self, text: str, original_message):
-        """转发消息到机器人私聊（使用用户客户端发送到机器人）"""
-        for attempt in range(3):  # 最多重试3次
+    async def download_and_resend_message(self, event, sender_name, chat_title):
+        """下载重发模式：自定义格式，支持文件大小检查"""
+        try:
+            message = event.message
+            
+            # 检查文件大小（如果是媒体消息）
+            if message.media and hasattr(message.media, 'document') and message.media.document:
+                file_size_mb = message.media.document.size / (1024 * 1024)
+                if file_size_mb > Config.MAX_DOWNLOAD_SIZE:
+                    logger.info(f"📄 文件过大({file_size_mb:.1f}MB > {Config.MAX_DOWNLOAD_SIZE}MB)，使用直接转发")
+                    return False
+            
+            # 生成自定义前缀
+            message_time = ""
+            if Config.SHOW_MESSAGE_TIME:
+                message_time = event.date.strftime(Config.TIME_FORMAT)
+            
+            prefix = Config.format_message_prefix(
+                chat_title=chat_title,
+                sender_name=sender_name,
+                message_time=message_time,
+                chat_id=str(event.chat_id),
+                message_id=str(message.id)
+            )
+            
+            # 下载并重发消息内容
+            await self.send_message_content_to_bot(event, sender_name, chat_title)
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ 下载重发失败: {e}")
+            return False
+    
+    async def direct_forward_message(self, event, sender_name, chat_title):
+        """直接转发模式：快速转发，带简单前缀"""
+        try:
+            # 生成简单前缀
+            message_time = ""
+            if Config.SHOW_MESSAGE_TIME:
+                message_time = event.date.strftime(Config.TIME_FORMAT)
+            
+            prefix = Config.format_message_prefix(
+                chat_title=chat_title,
+                sender_name=sender_name,
+                message_time=message_time,
+                chat_id=str(event.chat_id),
+                message_id=str(event.message.id)
+            )
+            
+            # 先发送前缀信息
+            await self.client.send_message(self.bot_entity, prefix)
+            
+            # 然后直接转发原消息
+            await self.client.forward_messages(self.bot_entity, event.message)
+            
+        except Exception as e:
+            logger.error(f"❌ 直接转发失败: {e}")
+            raise
+    
+    async def ensure_bot_entity(self):
+        """确保机器人实体已初始化"""
+        if not hasattr(self, 'bot_entity'):
             try:
-                # 获取机器人实体（第一次时初始化）
-                if not hasattr(self, 'bot_entity'):
-                    try:
-                        # 方法1：通过token中的bot ID获取
-                        bot_id = Config.BOT_TOKEN.split(':')[0]
-                        self.bot_entity = await self.client.get_entity(int(bot_id))
-                        logger.info(f"✅ 获取到机器人实体: @{self.bot_entity.username} (ID: {bot_id})")
-                    except Exception as e1:
-                        try:
-                            # 方法2：通过bot客户端获取自己的信息
-                            if hasattr(self, 'bot_client') and self.bot_client:
-                                me = await self.bot_client.get_me()
-                                self.bot_entity = await self.client.get_entity(me.id)
-                                logger.info(f"✅ 通过bot客户端获取到机器人实体: @{me.username}")
-                            else:
-                                raise Exception("无法获取机器人实体")
-                        except Exception as e2:
-                            logger.error(f"❌ 获取机器人实体失败: {e1}, {e2}")
-                            raise Exception("无法获取机器人实体，请检查BOT_TOKEN配置")
+                # 方法1：通过token中的bot ID获取
+                bot_id = Config.BOT_TOKEN.split(':')[0]
+                self.bot_entity = await self.client.get_entity(int(bot_id))
+                logger.info(f"✅ 获取到机器人实体: @{self.bot_entity.username} (ID: {bot_id})")
+            except Exception as e1:
+                try:
+                    # 方法2：通过bot客户端获取自己的信息
+                    if hasattr(self, 'bot_client') and self.bot_client:
+                        me = await self.bot_client.get_me()
+                        self.bot_entity = await self.client.get_entity(me.id)
+                        logger.info(f"✅ 通过bot客户端获取到机器人实体: @{me.username}")
+                    else:
+                        raise Exception("无法获取机器人实体")
+                except Exception as e2:
+                    logger.error(f"❌ 获取机器人实体失败: {e1}, {e2}")
+                    raise Exception("无法获取机器人实体，请检查BOT_TOKEN配置")
+    
+    async def send_message_content_to_bot(self, event, sender_name, chat_title):
+        """根据消息类型发送内容到机器人（下载重发模式 - 纯净内容）"""
+        try:
+            message = event.message
+            
+            # 下载重发模式：直接发送原始内容，不添加前缀
+            # 这样既没有转发标记，又保持内容的原始性
+            
+            # 文本消息 - 直接发送原文
+            if message.text and not message.media:
+                # 检查消息长度
+                text_content = message.text
+                if len(text_content) > Config.MAX_MESSAGE_LENGTH:
+                    text_content = text_content[:Config.MAX_MESSAGE_LENGTH-3] + "..."
                 
-                # 使用用户客户端发送消息到机器人私聊
-                await self.client.send_message(self.bot_entity, text)
-                logger.debug(f"✅ 消息已发送到机器人 @{self.bot_entity.username}")
+                await self.client.send_message(self.bot_entity, text_content)
+                return
+            
+            # 图片消息 - 下载重发，保留原始说明文字
+            elif message.photo:
+                caption = message.text if message.text else None
+                if caption and len(caption) > 1024:  # Telegram caption limit
+                    caption = caption[:1021] + "..."
                 
-                return  # 成功发送，退出重试循环
+                # 下载并重新发送图片
+                photo_bytes = await message.download_media(bytes)
+                await self.client.send_file(
+                    self.bot_entity, 
+                    photo_bytes, 
+                    caption=caption
+                )
+            
+            # 文档/文件消息 - 下载重发
+            elif message.document:
+                caption = message.text if message.text else None
+                if caption and len(caption) > 1024:
+                    caption = caption[:1021] + "..."
                 
-            except FloodWaitError as e:
-                wait_time = e.seconds
-                logger.warning(f"⏳ API限流，等待 {wait_time} 秒...")
-                await asyncio.sleep(wait_time)
+                # 检查文件大小
+                file_size_mb = message.document.size / (1024 * 1024)
+                if file_size_mb > Config.MAX_DOWNLOAD_SIZE:
+                    # 文件太大，发送提示信息
+                    size_info = f"📄 文档过大({file_size_mb:.1f}MB)，无法下载"
+                    await self.client.send_message(self.bot_entity, size_info)
+                    return
                 
-            except Exception as e:
-                if attempt < 2:
-                    logger.warning(f"⚠️ 发送失败，重试 {attempt + 1}/3: {e}")
-                    await asyncio.sleep(5)
-                else:
-                    logger.error(f"❌ 发送彻底失败: {e}")
-                    raise
+                # 获取文件信息
+                file_name = "document"
+                if hasattr(message.document, 'attributes'):
+                    for attr in message.document.attributes:
+                        if hasattr(attr, 'file_name') and attr.file_name:
+                            file_name = attr.file_name
+                            break
+                
+                # 下载并重新发送文档
+                file_bytes = await message.download_media(bytes)
+                await self.client.send_file(
+                    self.bot_entity,
+                    file_bytes,
+                    caption=caption,
+                    file_name=file_name
+                )
+            
+            # 视频消息 - 下载重发
+            elif message.video:
+                caption = message.text if message.text else None
+                if caption and len(caption) > 1024:
+                    caption = caption[:1021] + "..."
+                
+                # 检查文件大小
+                file_size_mb = message.video.size / (1024 * 1024)
+                if file_size_mb > Config.MAX_DOWNLOAD_SIZE:
+                    size_info = f"🎥 视频过大({file_size_mb:.1f}MB)，无法下载"
+                    await self.client.send_message(self.bot_entity, size_info)
+                    return
+                
+                # 下载并重新发送视频
+                video_bytes = await message.download_media(bytes)
+                await self.client.send_file(
+                    self.bot_entity,
+                    video_bytes,
+                    caption=caption
+                )
+            
+            # 音频/语音消息 - 下载重发
+            elif message.voice or message.audio:
+                caption = message.text if message.text else None
+                if caption and len(caption) > 1024:
+                    caption = caption[:1021] + "..."
+                
+                # 下载并重新发送音频
+                audio_bytes = await message.download_media(bytes)
+                await self.client.send_file(
+                    self.bot_entity,
+                    audio_bytes,
+                    caption=caption
+                )
+            
+            # 贴纸 - 下载重发
+            elif message.sticker:
+                # 下载并重新发送贴纸，不添加任何文字说明
+                sticker_bytes = await message.download_media(bytes)
+                await self.client.send_file(self.bot_entity, sticker_bytes)
+            
+            # 位置消息 - 转换为简洁文本
+            elif message.geo:
+                location_text = f"📍 位置: {message.geo.lat}, {message.geo.long}"
+                await self.client.send_message(self.bot_entity, location_text)
+            
+            # 联系人信息 - 转换为简洁文本
+            elif message.contact:
+                contact = message.contact
+                contact_text = f"👤 {contact.first_name} {contact.last_name or ''} {contact.phone_number}"
+                await self.client.send_message(self.bot_entity, contact_text)
+            
+            # 投票 - 转换为简洁文本
+            elif message.poll:
+                poll = message.poll
+                poll_text = f"📊 {poll.question}\n"
+                for i, answer in enumerate(poll.answers, 1):
+                    poll_text += f"{i}. {answer.text}\n"
+                await self.client.send_message(self.bot_entity, poll_text)
+            
+            # 其他类型消息
+            else:
+                # 发送简单提示
+                await self.client.send_message(self.bot_entity, "[不支持的消息类型]")
+                
+        except Exception as e:
+            logger.error(f"❌ 下载重发失败: {e}")
+            # 发送错误提示
+            try:
+                await self.client.send_message(self.bot_entity, f"❌ 消息处理失败: {str(e)}")
+            except:
+                pass  # 避免二次错误
     
     async def validate_forward_groups(self):
         """验证群组转发配置"""
@@ -608,6 +798,9 @@ class TelegramMessageReceiver:
                     await self.bot_client.start(bot_token=Config.BOT_TOKEN)
                     bot_me = await self.bot_client.get_me()
                     print(f"✅ 机器人登录成功: {bot_me.first_name} (@{bot_me.username})")
+                    
+                    # 初始化机器人实体
+                    await self.ensure_bot_entity()
                     
                     # 验证群组配置
                     await self.validate_forward_groups()
